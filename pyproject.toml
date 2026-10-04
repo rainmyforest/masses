@@ -1,0 +1,23 @@
+[project]
+name = "fortune-app"
+version = "1.0.0"
+description = "五运六气体质分析 · 免登录独立版（自医疗数据平台 v2.5 提出）"
+readme = "README.md"
+requires-python = ">=3.13"
+dependencies = [
+    "httpx>=0.28.1",
+    "lunar-python>=1.3.0",
+    "openai>=3.24.0",
+    "pandas>=2.3,<3",
+    "streamlit>=1.65.0",
+    "tabulate>=0.9.0",
+]
+
+[dependency-groups]
+dev = [
+    "pytest>=8.0",
+]
+
+[[tool.uv.index]]
+url = "https://mirrors.aliyun.com/pypi/simple/"
+default = true
