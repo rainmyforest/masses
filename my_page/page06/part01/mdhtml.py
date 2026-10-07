@@ -1,4 +1,6 @@
-"""page06/part01 · 分析结果 HTML 报告导出（2026-09-25 V3：C 项配套）。
+"""page06/part01 · 分析结果 HTML 报告导出（2026-09-25 V3：C 项配套；
+2026-10-07 S5：新增 appendices 附录参数——A命盘/B运气/C大运/D流年/E口径，
+原生 <details> 折叠 + 打印 CSS 兼容；不传时输出与旧版一致）。
 
 零第三方依赖的 markdown→HTML 转换：覆盖 LLM 输出的常用结构
 （标题/无序有序列表/粗斜体/分隔线/表格/段落）。
@@ -91,14 +93,46 @@ th,td{border:1px solid #d9cdb4;padding:6px 10px;text-align:left}
 .meta{color:#8a7c66;font-size:.88em;margin:4px 0 20px}
 .footer{margin-top:36px;padding-top:10px;border-top:1px solid #d9cdb4;
 color:#a09585;font-size:.8em}
-@media print{body{margin:0;background:#fff}}
+details{margin:12px 0}
+summary{cursor:pointer;color:#7a5c30;margin-top:1.4em}
+summary h3{display:inline;font-size:1.05em;margin:0;color:#8c6f4a}
+.appendix-note{color:#a09585;font-size:.8em;margin:6px 0 16px}
+@media print{body{margin:0;background:#fff}
+.appendix-note{display:none}
+summary{cursor:auto;margin-top:1em}
+tr{page-break-inside:avoid}}
 """
 
 
-def build_report_html(title, meta_lines, result_md):
-    """组装独立 HTML 报告（标题+元信息+正文+免责页脚）。"""
+def _appendix_html(appendices):
+    """附录区（方案 4.3）：原生 <details> 折叠（零 JS，浏览器/打印原生支持），
+    summary 内嵌 h3（summary 内容模型允许 heading，CSS 置 inline）。
+    打印兼容：展开节随正文打印，收起节不打印——故附打印提示行（仅屏显）。"""
+    parts = ["<hr/>", "<h2>附录</h2>",
+             '<div class="appendix-note">如需打印完整附录，'
+             "请先点击各节标题展开后再打印。</div>"]
+    for ap in appendices:
+        parts.append(
+            f'<details{" open" if ap.get("open") else ""}>'
+            f'<summary><h3>{_html.escape(ap["title"])}</h3></summary>'
+            f"{md_to_html(ap['md'])}</details>")
+    return "\n".join(parts)
+
+
+def build_report_html(title, meta_lines, result_md, appendices=None):
+    """组装独立 HTML 报告（标题+元信息+正文+可选附录+免责页脚）。
+
+    :param appendices: 附录列表 [{title, md, open}]（2026-10-07 S5，方案 4.3）：
+        title=节标题、md=markdown 内容（复用 md_to_html 渲染路径）、
+        open=True 默认展开（当前调用方 A-E 均传 False，即默认全部收起）；
+        None/空列表时不渲染附录区，
+        输出与旧版完全一致（向后兼容，主平台同步/旧调用不受影响）。
+    """
     meta = "".join(f"<div>{_html.escape(m)}</div>" for m in meta_lines)
     now = datetime.now().strftime("%Y-%m-%d %H:%M")
+    appendix_html = _appendix_html(appendices) if appendices else ""
+    main_html = f"{md_to_html(result_md)}\n{appendix_html}" if appendix_html \
+        else md_to_html(result_md)
     return f"""<!DOCTYPE html>
 <html lang="zh-CN">
 <head>
@@ -109,7 +143,7 @@ def build_report_html(title, meta_lines, result_md):
 <body>
 <h1>{_html.escape(title)}</h1>
 <div class="meta">{meta}<div>生成时间：{now}</div></div>
-{md_to_html(result_md)}
+{main_html}
 <div class="footer">本报告由「中医道医学习平台 · 五运六气体质分析」生成，
 内容为体质倾向提示，不构成医疗诊断，不预测吉凶。健康问题请线下就医。</div>
 </body>

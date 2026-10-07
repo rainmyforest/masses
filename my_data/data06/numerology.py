@@ -330,36 +330,33 @@ def calculate_sheng_chang(bazi, ri_zhu):
     return [sheng_chang_table[ri_zhu][ganzhi[1]] for ganzhi in bazi if ganzhi[1] in sheng_chang_table[ri_zhu]]
 
 def calculate_kongwang(bazi):
-    """计算八字的空亡"""
-    kongwang_list = []
-    for stem_branch in bazi:
-        if stem_branch in kong_wang_table:
-            kongwang_list.append(str(kong_wang_table[stem_branch]))
-    return kongwang_list
+    """计算八字的空亡（两支连写为短字符串，如"戌亥"；
+    旧实现 str(list) 产出"['戌', '亥']"，表格里占宽且不可读）。"""
+    return ["".join(kong_wang_table[stem_branch])
+            for stem_branch in bazi if stem_branch in kong_wang_table]
 
 
 def calculate_xing_yun(bazi, ri_zhu):
-    """计算星运（大运状态）"""
+    """计算星运（仅状态名，如"长生"；旧实现追加的大段释义
+    "长生 - 新生阶段，充满活力"在表格每行重复，把列撑到折叠）。"""
     xing_yun = []
     for ganzhi in bazi:
         zhi = ganzhi[1]
         if zhi in sheng_chang_table[ri_zhu]:
-            state = sheng_chang_table[ri_zhu][zhi]
-            xing_yun.append(f"{state} - {xing_yun_table[state]}")
+            xing_yun.append(sheng_chang_table[ri_zhu][zhi])
         else:
             xing_yun.append("")
     return xing_yun
 
 
 def calculate_zi_zuo(bazi):
-    """计算自坐（日干与日支关系）- 为每个柱计算"""
+    """计算自坐（日干与日支关系，仅状态名；释义见 xing_yun_table）。"""
     zi_zuo = []
     for ganzhi in bazi:
         zhi = ganzhi[1]  # 当前柱的地支
         gan = ganzhi[0]  # 当前柱的天干
         if zhi in zi_zuo_table[gan]:
-            state = zi_zuo_table[gan][zhi]
-            zi_zuo.append(f"{state} - {xing_yun_table[state]}")
+            zi_zuo.append(zi_zuo_table[gan][zhi])
         else:
             zi_zuo.append("")
     return zi_zuo
@@ -387,13 +384,15 @@ def numberology(bazi):
     # 计算自坐
     zi_zuo = calculate_zi_zuo(bazi)
 
-    # 输出结果
+    # 输出结果（全部为短字符串列：藏干十神原为 list，直接进 st.dataframe
+    # 会被 Arrow/Glide 渲染成挤在一起的对象单元格，这里统一顿号连接；
+    # "*"为藏干主气标记，表格无图例故去除，主气信息在"藏干"列首位）
     result = pd.DataFrame({
         '生克': ss,
         '干支': bazi,
         '纳音': na_yin,
         '藏干': zang_gan,
-        '十神': shi_shen,
+        '十神': ["、".join(x).replace("*", "") for x in shi_shen],
         '长生': sheng_chang,
         '空亡': kong_wang,
         '星运': xing_yun,

@@ -12,6 +12,9 @@ import streamlit as st
 
 from my_page.page06.part01 import analyze
 
+# 页面级配置（只能代码设置）：标题/图标/布局/侧栏初始态。
+# 全站视觉主题与运行行为（[theme]/[browser]/[client]）在
+# .streamlit/config.toml，改主题勿改这里。
 st.set_page_config(
     page_title="五运六气体质分析",
     page_icon="☯",

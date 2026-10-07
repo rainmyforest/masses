@@ -1,19 +1,23 @@
-"""page06/part01 测试：排盘引擎（A）+ 五运六气（B）+ prompt + 全链路。
+"""page06/part01 测试：排盘引擎（A）+ 五运六气（B）+ prompt
++ 大运流年/日主强弱（C）+ key 管理（D）+ HTML 导出 + 太阳时。
 
-运行：cd hospital && python -m pytest my_page/page06/part01/test_core.py -q
+独立版（fortune-app）本地单测：不依赖主平台页面（原 4 项 e2e 已随
+test_part01_core.py 一并清理，页面级联调见 test_s6_integration.py）。
+运行：cd fortune-app && python -m pytest my_page/page06/part01/test_core.py -q
 """
 import sys
-from datetime import date, datetime, time
+from datetime import date, datetime
 from pathlib import Path
 
 import pytest
 
-ROOT = Path(__file__).resolve().parents[3]      # hospital/
+ROOT = Path(__file__).resolve().parents[3]      # fortune-app/
 if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
 from lunar_python import Solar, Lunar                          # noqa: E402
-from my_page.page06.part01 import engine, prompt, solartime, yunqi  # noqa: E402
+from my_page.page06.part01 import (                             # noqa: E402
+    dayun, engine, prompt, solartime, yunqi)
 
 # ─────────────────────────── A：排盘引擎 ───────────────────────────
 
@@ -216,6 +220,275 @@ def test_wuxing_stats():
     assert ws == {"木": 1.6, "火": 0.0, "土": 0.1, "金": 1.2, "水": 3.9}, ws
 
 
+# ───────────── C：大运流年 + 日主强弱（2026-10-07 大运流年功能 S1-S3） ─────────────
+
+_NOW = datetime(2026, 10, 7, 12, 0)      # now 锚定（可复现，不随真实日期漂移）
+
+# 顺/逆排 4 命例（年柱干支阴阳 × 性别，方案 2.1 实测锚定）
+_DAYUN_CASES = [
+    # (y, m, d, h, mi), gender, 排法, 大运前 3 步干支, 起运虚岁
+    ((1990, 1, 15, 10, 30), 1, "阴男逆排", ["丙子", "乙亥", "甲戌"], 4),
+    ((1990, 1, 15, 10, 30), 0, "阴女顺排", ["戊寅", "己卯", "庚辰"], 7),
+    ((1984, 10, 5, 6, 0), 1, "阳男顺排", ["甲戌", "乙亥", "丙子"], 2),
+    ((1984, 10, 5, 6, 0), 0, "阳女逆排", ["壬申", "辛未", "庚午"], 10),
+]
+
+
+@pytest.mark.parametrize("args,gender,pai,seq,start_age", _DAYUN_CASES)
+def test_dayun_direction(args, gender, pai, seq, start_age):
+    y, m, d, h, mi = args
+    f = dayun.dayun_facts(Solar.fromYmdHms(y, m, d, h, mi, 0), gender, now=_NOW)
+    assert f["起运"]["排法"] == pai
+    assert f["起运"]["起运虚岁"] == start_age
+    assert [s["干支"] for s in f["大运"][:3]] == seq
+    assert len(f["大运"]) == 9                    # 10 步含起运前段，干支步 9
+    assert [s["序"] for s in f["大运"]] == list(range(1, 10))
+
+
+def test_dayun_1990_male_anchor():
+    """方案 2.1/3.1 标准命例全量锚定（己巳丁丑庚辰辛巳，男，now=2026）。"""
+    f = dayun.dayun_facts(Solar.fromYmdHms(1990, 1, 15, 10, 30, 0),
+                          1, now=_NOW)
+    q = f["起运"]
+    assert q["交运时刻"] == "1993年3月15日 10:30"
+    assert q["出生后"] == "出生后 3 年 2 个月"
+    assert q["流派"] == "3天折1年（传统）"
+    cur = f["当前大运"]
+    assert cur["干支"] == "癸酉" and cur["序"] == 4
+    assert (cur["起年"], cur["止年"], cur["起岁"], cur["止岁"]) == \
+        (2023, 2032, 34, 43)
+    assert cur["十神"] == "伤官"                    # 庚日主见癸
+    assert cur["纳音"] == "剑锋金" and cur["五行"] == "水金"
+    assert cur["当前"] and cur["备注"] == "当前 ★"
+    assert [s["干支"] for s in f["未来大运"]] == ["壬申", "辛未"]
+    fut = {s["干支"]: s for s in f["未来大运"]}
+    assert fut["壬申"]["十神"] == "食神" and fut["壬申"]["纳音"] == "剑锋金"
+    assert fut["辛未"]["纳音"] == "路旁土" and fut["辛未"]["五行"] == "金土"
+    assert f["大运"][4]["备注"] == "换运年 2033"    # 序 5 壬申起年
+    # 当前大运流年：当前步管辖 10 流年；虚岁口径 = 公历年差 + 1
+    assert len(f["当前大运流年"]) == 10
+    assert [r["年"] for r in f["当前大运流年"]] == list(range(2023, 2033))
+    assert [r["虚岁"] for r in f["当前大运流年"]] == list(range(34, 44))
+    # 近期流年（当前年 ±3）：2023-2029，2026 为当前年
+    near = {r["年"]: r for r in f["近期流年"]}
+    assert sorted(near) == list(range(2023, 2030))
+    assert near[2026]["当前"] and near[2026]["备注"] == "当前年 ★"
+    assert near[2026]["干支"] == "丙午" and near[2026]["十神"] == "七杀"
+    assert near[2026]["虚岁"] == 37               # 2026 − 1990 + 1
+    assert near[2023]["备注"] == "换运年"          # 癸酉步起年
+
+
+def test_dayun_liuchun_boundary():
+    """立春分界：年柱（→顺逆排）与流年干支（→立春界）双验证。"""
+    # 2026-02-03（乙巳年）vs 2026-02-04 12时（立春交节后，丙午年）男命
+    a = dayun.dayun_facts(Solar.fromYmdHms(2026, 2, 3, 12, 0, 0), 1, now=_NOW)
+    b = dayun.dayun_facts(Solar.fromYmdHms(2026, 2, 4, 12, 0, 0), 1, now=_NOW)
+    assert a["起运"]["排法"] == "阴男逆排" and a["大运"][0]["干支"] == "戊子"
+    assert b["起运"]["排法"] == "阳男顺排" and b["大运"][0]["干支"] == "辛卯"
+    for f in (a, b):                              # 2026 立春前出生，流年仍丙午
+        near = {r["年"]: r["干支"] for r in f["近期流年"]}
+        assert near[2026] == "丙午"
+    # 流年干支与独立立春界锚点交叉验证（1990 男命，2023-2029 全覆盖）
+    f90 = dayun.dayun_facts(Solar.fromYmdHms(1990, 1, 15, 10, 30, 0), 1, now=_NOW)
+    near = {r["年"]: r["干支"] for r in f90["近期流年"]}
+    for y in range(2023, 2030):
+        anchor = Solar.fromYmdHms(y, 7, 1, 12, 0, 0).getLunar() \
+            .getYearInGanZhiByLiChun()           # 7 月远离开年边界，锚点安全
+        assert near[y] == anchor, y
+
+
+def test_dayun_now_anchor_reproducible():
+    """now 锚定可复现：同公历年一致；跨步边界当前标记正确迁移。"""
+    s = Solar.fromYmdHms(1990, 1, 15, 10, 30, 0)
+    f1 = dayun.dayun_facts(s, 1, now=datetime(2026, 10, 7, 12, 0))
+    f2 = dayun.dayun_facts(s, 1, now=datetime(2026, 10, 7, 20, 0))
+    assert f1 == f2                               # 同公历年 → 输出逐字段一致
+    assert dayun.dayun_facts(s, 1, now=datetime(2032, 6, 1))["当前大运"][
+        "干支"] == "癸酉"                          # 止年含 2032
+    assert dayun.dayun_facts(s, 1, now=datetime(2033, 6, 1))["当前大运"][
+        "干支"] == "壬申"                          # 2033 已换运
+
+
+def test_dayun_before_start_child():
+    """未交运（index 0 段）：当前大运 None、未来=前两步、起运前仍带流年。"""
+    f = dayun.dayun_facts(Solar.fromYmdHms(2024, 6, 15, 10, 0, 0), 1, now=_NOW)
+    assert f["当前大运"] is None and f["当前大运流年"] == []
+    assert not any(s["当前"] for s in f["大运"])
+    assert [s["干支"] for s in f["未来大运"]] == ["辛未", "壬申"]
+    near = {r["年"]: r["干支"] for r in f["近期流年"]}
+    assert near.get(2024) == "甲辰" and near.get(2026) == "丙午"
+    assert 2023 not in near                        # 出生前年份不入流年
+
+
+def test_dayun_sect2_and_gender_norm():
+    """sect=2 精确折算（交运时刻不同、干支序列一致）；gender 容错。"""
+    f1 = dayun.dayun_facts(Solar.fromYmdHms(1990, 1, 15, 10, 30, 0),
+                           "男", now=_NOW)
+    f2 = dayun.dayun_facts(Solar.fromYmdHms(1990, 1, 15, 10, 30, 0),
+                           1, sect=2, now=_NOW)
+    assert f1["起运"]["流派"] == "3天折1年（传统）"
+    assert f2["起运"]["流派"] == "按分钟精确折算"
+    assert f2["起运"]["交运时刻"] == "1993年3月17日 04:30"
+    assert [s["干支"] for s in f2["大运"]] == [s["干支"] for s in f1["大运"]]
+    with pytest.raises(ValueError, match="gender"):
+        dayun.dayun_facts(Solar.fromYmdHms(1990, 1, 15, 10, 30, 0),
+                          "x", now=_NOW)
+
+
+def test_dayun_limit_truncation():
+    """limit 截断"大运"列表；当前判定与起运虚岁不受截断影响。"""
+    f = dayun.dayun_facts(Solar.fromYmdHms(1990, 1, 15, 10, 30, 0), 1,
+                          limit=3, now=_NOW)
+    assert [s["序"] for s in f["大运"]] == [1, 2, 3]
+    assert f["当前大运"]["干支"] == "癸酉" and f["当前大运"]["序"] == 4
+    assert f["起运"]["起运虚岁"] == 4
+
+
+def test_dayun_contract_serializable():
+    """接口契约（方案 2.3）：结构完整 + 全 primitives（可 JSON 序列化）。"""
+    import json
+    f = dayun.dayun_facts(Solar.fromYmdHms(1990, 1, 15, 10, 30, 0), 1, now=_NOW)
+    json.dumps(f, ensure_ascii=False)              # 不抛即通过
+    assert set(f) == {"起运", "大运", "当前大运", "未来大运",
+                      "当前大运流年", "近期流年"}
+    step_keys = {"序", "干支", "十神", "纳音", "五行", "起年", "止年",
+                 "起岁", "止岁", "流年数", "当前", "备注"}
+    assert all(set(s) == step_keys for s in f["大运"])
+    assert set(f["当前大运"]) == step_keys
+
+
+def test_day_master_strength():
+    """日主强弱三要素粗判（Q9）：得令/得地/得势锚定。"""
+    # 甲子 癸酉 壬申 癸卯：壬水得令（酉月本气金生水）、得地（申藏壬水）、
+    # 得势（水3.9+金1.2=5.1/6.8）→ 偏强，喜木（泄）土（制）
+    st = engine.day_master_strength(["甲子", "癸酉", "壬申", "癸卯"])
+    assert (st["得令"], st["得地"], st["得势"]) == (True, True, True)
+    assert st["粗判"] == "偏强"
+    assert st["喜用倾向"] == "木（食伤泄秀）、土（官杀制衡）"
+    assert st["同党权重"] == "5.1/6.8（约 75%）"
+    # 己巳 丁丑 庚辰 辛巳：庚金得令（丑月本气土生金）、失地（辰无金）、
+    # 得势（金2.7+土2.4=5.1/8.0）→ 偏强，喜水（泄）火（制）
+    st2 = engine.day_master_strength(["己巳", "丁丑", "庚辰", "辛巳"])
+    assert (st2["得令"], st2["得地"], st2["得势"]) == (True, False, True)
+    assert st2["粗判"] == "偏强"
+    assert st2["喜用倾向"] == "水（食伤泄秀）、火（官杀制衡）"
+    # 丁巳 丙午 甲申 庚午：甲木夏生，火旺泄气，三要素全失 → 偏弱
+    st3 = engine.day_master_strength(["丁巳", "丙午", "甲申", "庚午"])
+    assert (st3["得令"], st3["得地"], st3["得势"]) == (False, False, False)
+    assert st3["粗判"] == "偏弱"
+    assert st3["喜用倾向"] == "水（印绶生扶）、木（比劫帮扶）"
+    # 丙寅 庚寅 甲午 庚午：甲木得令（寅月本气木）、失地（午无木）、
+    # 失势（木2.2/7.8）→ 中和（单项）
+    st4 = engine.day_master_strength(["丙寅", "庚寅", "甲午", "庚午"])
+    assert (st4["得令"], st4["得地"], st4["得势"]) == (True, False, False)
+    assert st4["粗判"] == "中和"
+    assert st4["喜用倾向"] == "无明显喜忌，以五行流通为要"
+
+
+def _mk_prompt_dy(mode, with_dayun=True, **kw):
+    """大运流年版 prompt 组装（S3：dayun + strength 注入，now 锚定）。"""
+    info = engine.chart(1990, 1, 15, 10, minute=30)
+    facts = yunqi.yunqi_facts(info["solar"])
+    today = yunqi.today_context()
+    dy = dayun.dayun_facts(info["solar"], 1, now=_NOW) if with_dayun else None
+    st = engine.day_master_strength(info["bazi"])
+    return prompt.build_prompt(mode, info, facts, today, "最近睡不好", "男",
+                               dayun=dy, strength=st, **kw)
+
+
+def test_prompt_dayun_injection():
+    """S3：大运流年事实段 + 日主强弱粗判注入 head（分析师模式）。"""
+    _, c = _mk_prompt_dy(prompt.MODES[0])
+    assert "大运流年事实" in c and "以立春分界" in c
+    assert "起运：出生后 3 年 2 个月交运（1993年3月15日 10:30）" in c
+    assert "阴男逆排（3天折1年（传统））" in c
+    assert "当前大运：癸酉（伤官/剑锋金），34-43 虚岁（2023-2032），第 4 步" in c
+    assert "未来大运：壬申（食神/剑锋金），44-53 虚岁（2033-2042）" in c
+    assert "2023 癸卯（伤官）" in c and "2029 己酉（正印）" in c
+    assert "2026 丙午（七杀，当前年）" in c
+    assert "日主强弱粗判" in c and "粗判**偏强**" in c and "喜用倾向" in c
+
+
+def test_prompt_dayun_sections():
+    """S3：报告新增独立节三，原三~六节顺延为四~七节。"""
+    _, c = _mk_prompt_dy(prompt.MODES[0])
+    assert "七个部分" in c and "六个部分" not in c
+    secs = ["一、出生运气禀赋解读", "二、日主与五行体质",
+            "三、大运流年与体质走向", "四、体质特征与易感倾向",
+            "五、顺时养生方案", "六、四季调养日历", "七、心理疏导与赋能"]
+    for sec in secs:
+        assert sec in c, sec
+    for i in range(len(secs) - 1):                # 节序单调递增
+        assert c.index(secs[i]) < c.index(secs[i + 1])
+    assert "换运年（2033）前后体质节奏的变化提示" in c
+
+
+def test_prompt_dayun_redline_and_wellness():
+    """S3：红线强化句；顾问模式注入并并入第一节，原四部分结构保持。"""
+    _, c = _mk_prompt_dy(prompt.MODES[0])
+    assert "禁止吉凶祸福、事业财运、婚恋子女等命运断言" in c
+    _, w = _mk_prompt_dy(prompt.MODES[1])
+    assert "大运流年事实" in w and "当前大运" in w
+    assert "阶段性体质背景" in w                # 并入第一节，不单独成节
+    assert "三、行动清单" in w and "四、心理疏导与赋能" in w
+    assert "婚恋子女等命运断言" in w                # 顾问模式红线同样强化
+
+
+def test_prompt_dayun_time_rough():
+    """S3：time_rough + dayun → 起运交运日期偏差局限性说明（R2）。"""
+    _, c = _mk_prompt_dy(prompt.MODES[0], time_rough=True)
+    assert "时间不确定" in c and "仅供参考" in c
+    assert "数天至数月偏差" in c
+
+
+def test_prompt_dayun_before_start():
+    """未交运命例：prompt 渲染"尚未交运"行，不抛异常。"""
+    info = engine.chart(2024, 6, 15, 10)
+    facts = yunqi.yunqi_facts(info["solar"])
+    today = yunqi.today_context()
+    dy = dayun.dayun_facts(info["solar"], 1, now=_NOW)
+    _, c = prompt.build_prompt(prompt.MODES[0], info, facts, today,
+                               "孩子体质", "男", dayun=dy)
+    assert "尚未交运，2031 年起进入第一步大运 辛未" in c
+
+
+def test_prompt_without_dayun_backward_compat():
+    """不传 dayun/strength（旧调用/主平台同步）→ V3 六节结构与原输出不变。"""
+    _, c = _mk_prompt(prompt.MODES[0])
+    assert "大运流年事实" not in c and "日主强弱粗判" not in c
+    assert "六个部分" in c and "三、大运流年与体质走向" not in c
+    for sec in ("三、体质特征与易感倾向", "四、顺时养生方案",
+                "五、四季调养日历", "六、心理疏导与赋能"):
+        assert sec in c, sec
+    assert "七、心理疏导与赋能" not in c
+
+
+# ───────────── D：DeepSeek key 管理（2026-10-07 P1-1） ─────────────
+
+def test_deepseek_key_env_priority(monkeypatch):
+    """key 读取：环境变量 DEEPSEEK_API_KEY 优先（不真实调用 API）。"""
+    from my_model.open_ai import deepseek as ds
+    monkeypatch.setenv("DEEPSEEK_API_KEY", "sk-test-env-key")
+    assert ds.api_key_or_none() == "sk-test-env-key"
+
+
+def test_deepseek_key_missing_error(monkeypatch):
+    """未配置 key → RuntimeError 带配置指引（analyze.py 兜底分支承接）。"""
+    from my_model.open_ai import deepseek as ds
+    monkeypatch.delenv("DEEPSEEK_API_KEY", raising=False)
+    if ds.api_key_or_none():          # 运行环境已配置（如用户本地）→ 不适用
+        pytest.skip("DEEPSEEK_API_KEY 已配置，跳过缺失场景")
+    with pytest.raises(RuntimeError, match="DEEPSEEK_API_KEY"):
+        ds.deepseek()
+
+
+def test_deepseek_no_hardcoded_key():
+    """源码无硬编码 key（P1-1 回归红线：key 不进源码）。"""
+    src = Path(ROOT / "my_model/open_ai/deepseek.py").read_text(encoding="utf-8")
+    assert "sk-d068fc" not in src
+    assert 'api_key="' not in src.replace('api_key=key', '')
+
+
 # ─────────────── HTML 报告导出（mdhtml.py） ───────────────
 
 def test_md_to_html_elements():
@@ -239,9 +512,6 @@ def test_build_report_html():
     assert "甲子 癸酉 壬申 癸卯" in page
     assert "不构成医疗诊断" in page        # 免责页脚
     assert "<h3>一</h3>" in page           # ## 映射 h3（# → h2）
-
-
-# ─────────────────────────── 全链路（AppTest） ───────────────────────────
 
 
 # ─────────────── 太阳时校正 + 分钟精度（solartime.py） ───────────────
@@ -310,117 +580,3 @@ def test_city_lon_table():
     from my_page.page06.part01 import solartime
     assert solartime.CITY_LON["邢台"] == 114.50
     assert len(solartime.CITY_LON) >= 30        # 河北全覆盖 + 全国主要城市
-
-
-def test_e2e_lunar_direct(monkeypatch):
-    """阴历直连：公历日历隐藏（无 date_input），阴历表单直接排盘；
-    2025 闰六月初一排盘 = 公历 2025-07-25 排盘；非法闰月拦截。"""
-    import my_model.open_ai.deepseek as dm_mod
-    monkeypatch.setattr(dm_mod, "deepseek",
-                        lambda role, content, models=0: "**测试桩**")
-    from streamlit.testing.v1 import AppTest
-    at = AppTest.from_file(
-        str(ROOT / "pages/06_🌿_中医道医学习平台.py"), default_timeout=60)
-    at.run()
-    at.selectbox(key="p01_cal").set_value("阴历")
-    at.run()
-    assert not at.exception
-    assert len(at.date_input) == 0                    # 公历日历已隐藏
-    at.number_input(key="p01_ly").set_value(2025)
-    at.number_input(key="p01_lm").set_value(6)
-    at.number_input(key="p01_ld").set_value(1)
-    at.checkbox(key="p01_lleap").check()
-    at.time_input(key="p01_time").set_value(time(10, 0))
-    at.run()
-    at.button(key="p01_go").click()
-    at.run()
-    assert not at.exception, at.exception
-    expect = " ".join(engine.chart(2025, 7, 25, 10)["bazi"])
-    assert any(expect in s.value for s in at.success), expect
-    # 非法闰月拦截
-    at.number_input(key="p01_lm").set_value(2)
-    at.run()
-    at.button(key="p01_go").click()
-    at.run()
-    assert any("闰二月" in e.value for e in at.error)
-
-
-def test_e2e_solar_time_toggle(monkeypatch):
-    """太阳时口径切换：默认 1990-01-01 10:00 + 邢台平太阳时（-22 分）
-    → 排盘公历回显退到 1989-12-31（跨年校正生效）。"""
-    import my_model.open_ai.deepseek as dm_mod
-    monkeypatch.setattr(dm_mod, "deepseek",
-                        lambda role, content, models=0: "**测试桩**")
-    from streamlit.testing.v1 import AppTest
-    at = AppTest.from_file(
-        str(ROOT / "pages/06_🌿_中医道医学习平台.py"), default_timeout=60)
-    at.run()
-    at.selectbox(key="p01_tmode").set_value(solartime.MEAN)
-    at.run()
-    at.button(key="p01_go").click()
-    at.run()
-    assert not at.exception, at.exception
-    # 校正生效：1990-01-01 10:00 − 22分 → 公历回显退为"1日 9时"
-    # （跨日场景见 test_solar_time_cross_day；此处同日仅小时回退；
-    #   农历"一九八九年腊月"是农历年滞后公历年，属正常现象）
-    assert any("公历 1990年1月1日 9时" in c.value for c in at.caption), \
-        [c.value for c in at.caption]
-    assert any("平太阳时" in c.value for c in at.caption)
-
-
-def test_e2e_part01(monkeypatch):
-    """表单 → 排盘 → 运气 → prompt → LLM（打桩）→ 展示。"""
-    import my_model.open_ai.deepseek as dm_mod
-    captured = {}
-
-    def fake_deepseek(role, content, models=0):
-        captured["role"] = role
-        captured["content"] = content
-        return "**体质分析结果（测试桩）**：五运六气 OK"
-
-    monkeypatch.setattr(dm_mod, "deepseek", fake_deepseek)
-
-    from streamlit.testing.v1 import AppTest
-    # 用真实入口（pages/06 包装页调用 main()；main.py 本身不自调）
-    at = AppTest.from_file(
-        str(ROOT / "pages/06_🌿_中医道医学习平台.py"), default_timeout=60)
-    at.run()
-    assert not at.exception
-    # 默认菜单即「五运六气体质分析」；date/time 控件选值
-    at.date_input(key="p01_date").set_value(date(2026, 1, 20))
-    at.time_input(key="p01_time").set_value(time(10, 30))
-    at.checkbox(key="p01_plain").check()           # 白话解说模式
-    at.run()
-    at.button(key="p01_go").click()
-    at.run()
-    assert not at.exception, at.exception
-    assert any("乙巳 己丑 甲午 己巳" in s.value for s in at.success)
-    assert any("体质分析结果（测试桩）" in m.value for m in at.markdown)
-    # 打桩捕获的 prompt 里确实带了确定性事实 + 白话指令
-    assert "司天" in captured["content"] and "四柱" in captured["content"]
-    assert "大白话" in captured["content"]
-    # HTML 下载按钮已渲染（download_button 独立元素类型）
-    assert any(b.key == "p01_dl" for b in at.get("download_button"))
-
-
-def test_e2e_menu_routing(monkeypatch):
-    """四菜单切换渲染（part03 未登录走拦截分支）。
-
-    bookstore/ceshi 的存储目录按平台分支：Windows=项目目录，非 Windows=/var/books
-    （用户本地为 Windows，正常）。本沙箱为 Linux，测试内临时把
-    platform.system 打桩为 Windows，走与用户一致的项目目录分支。
-    """
-    monkeypatch.setattr("platform.system", lambda: "Windows")
-    from streamlit.testing.v1 import AppTest
-    at = AppTest.from_file(
-        str(ROOT / "pages/06_🌿_中医道医学习平台.py"), default_timeout=60)
-    at.run()
-    for menu in ("中医书籍分享", "网盘书籍分享"):
-        at.sidebar.radio[0].set_value(menu)
-        at.run()
-        assert not at.exception, (menu, at.exception)
-    # 解决问题记录：未登录 → warning 拦截，不抛异常
-    at.sidebar.radio[0].set_value("解决问题记录")
-    at.run()
-    assert not at.exception
-    assert any("未登录" in w.value for w in at.warning)

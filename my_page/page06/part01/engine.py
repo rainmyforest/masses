@@ -73,6 +73,57 @@ def wuxing_stats(bazi):
     return {w: round(v, 1) for w, v in stats.items()}
 
 
+# ── 日主强弱三要素粗判（2026-10-07 大运流年功能 Q9）──
+_SHENG = {"木": "火", "火": "土", "土": "金", "金": "水", "水": "木"}
+_SHENG_ME = {v: k for k, v in _SHENG.items()}   # 生我者（印绶）
+_KE_ME = {"木": "金", "火": "水", "土": "木",    # 克我者（官杀）
+          "金": "火", "水": "土"}
+
+
+def day_master_strength(bazi):
+    """日主强弱三要素粗判（确定性事实层，供 prompt 注入，方案 Q9）。
+
+    三要素（通行粗判口径，非精算，LLM 解读层的坐标参考）：
+    - 得令：月支本气五行 = 日主同五行（比劫当令）或生扶日主（印绶当令）
+    - 得地：日支藏干中有日主同五行（日主通根）
+    - 得势：同党（日主 + 印绶）权重 ≥ 全局一半（wuxing_stats 口径）
+
+    粗判：满足 ≥2 项 → 偏强；0 项 → 偏弱；其余 → 中和。
+    喜用倾向候选：偏强 → 我生（食伤泄秀）+ 克我（官杀制衡）；
+    偏弱 → 生我（印绶）+ 同我（比劫）；中和 → 五行流通为要。
+
+    :param bazi: 四柱干支列表（chart()["bazi"]）
+    :return: dict（全 primitives），键：日主/月令/得令/得地/得势/
+        同党权重/粗判/喜用倾向
+    """
+    day_gan = bazi[2][0]
+    dw = STEM_WUXING[day_gan]                    # 日主五行
+    mom, son, officer = _SHENG_ME[dw], _SHENG[dw], _KE_ME[dw]
+
+    month_main = STEM_WUXING[_BRANCH_STEMS[bazi[1][1]][0]]   # 月令本气
+    de_ling = month_main in (dw, mom)
+    de_di = any(STEM_WUXING[s] == dw for s in _BRANCH_STEMS[bazi[2][1]])
+    stats = wuxing_stats(bazi)
+    total = sum(stats.values()) or 1.0
+    allies = stats[dw] + stats[mom]
+    de_shi = allies >= total * 0.5
+
+    n = de_ling + de_di + de_shi
+    if n >= 2:
+        verdict, favorites = "偏强", f"{son}（食伤泄秀）、{officer}（官杀制衡）"
+    elif n == 0:
+        verdict, favorites = "偏弱", f"{mom}（印绶生扶）、{dw}（比劫帮扶）"
+    else:
+        verdict, favorites = "中和", "无明显喜忌，以五行流通为要"
+    return {
+        "日主": f"{day_gan}（{dw}）",
+        "月令": f"{bazi[1][1]}（本气属{month_main}）",
+        "得令": de_ling, "得地": de_di, "得势": de_shi,
+        "同党权重": f"{allies:.1f}/{total:.1f}（约 {allies / total:.0%}）",
+        "粗判": verdict, "喜用倾向": favorites,
+    }
+
+
 def chart(year, month, day, hour, calendar="阳历", leap=False, minute=0):
     """排盘主入口：四柱八字 + 神煞综合表 + 农/公历文本。"""
     solar = birth_solar(year, month, day, hour, minute, calendar, leap)
